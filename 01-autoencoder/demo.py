@@ -1,95 +1,113 @@
+import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
+from config import *
 from matplotlib.animation import FuncAnimation
 from model import autoencoder
 from mpl_toolkits.mplot3d import Axes3D
+from scipy.spatial.transform import Rotation as R
 
 # Load data and model
-data = np.load("./data/cmu_data.npz")
-X = data["windows"].astype(np.float32)
-autoencoder.load_weights("./01-autoencoder/weights.h5")
+data = np.load("./data/01_data.npz")
+X = data["clips"].astype(np.float32)
+Xmean = data["mean"].astype(np.float32)
+Xstd = data["std"].astype(np.float32)
+
+autoencoder.load_weights("./01-autoencoder/01_weights.h5")
 
 # Select sample to animate
 sample_idx = 0
 x_orig = X[sample_idx]
 x_recon = autoencoder.predict(x_orig[np.newaxis, ...])[0]
-
-# Number of joints
-num_joints = 21
-bones = [
-    (0, 1),
-    (1, 2),
-    (2, 3),
-    (3, 4),
-    (4, 5),
-    (5, 6),
-    (3, 7),
-    (7, 8),
-    (8, 9),
-    (2, 10),
-    (10, 11),
-    (11, 12),
-    (2, 13),
-    (13, 14),
-    (14, 15),
-    (0, 16),
-    (16, 17),
-    (17, 18),
-    (0, 19),
-    (19, 20),
-]
+x_recon = (x_recon * Xstd) + Xmean
 
 
-def get_joint_positions(frame):
-    # Convert flat (63,) to (21,3)
-    return frame.reshape((num_joints, 3))
+def animate_plot(animations):
+    # Process data
+    processed_animations = []
+    for anim in animations:
+        joints = anim[:, :-3].reshape((160, 20, 3))
+        root_x, root_z, root_r = anim[:, -3], anim[:, -2], anim[:, -1]
 
+        rotation = R.identity()
+        translation = np.array([0.0, 0.0, 0.0])
 
-# Setup figure and 3D axes
-fig = plt.figure(figsize=(10, 5))
+        for i in range(len(joints)):
+            joints[i] = rotation.apply(joints[i])
+            joints[i, :, 0] += translation[0]
+            joints[i, :, 2] += translation[2]
 
-ax_orig = fig.add_subplot(121, projection="3d")
-ax_orig.set_title("Original Motion")
-ax_recon = fig.add_subplot(122, projection="3d")
-ax_recon.set_title("Reconstructed Motion")
+            delta_rot = R.from_rotvec(-root_r[i] * np.array([0, 1, 0]))
+            rotation = delta_rot * rotation
+            translation = translation + rotation.apply(
+                np.array([root_x[i], 0, root_z[i]])
+            )
 
-# Set axis limits (adjust based on data scale)
-lims = [-1, 1]
-for ax in [ax_orig, ax_recon]:
-    ax.set_xlim(lims)
-    ax.set_ylim(lims)
-    ax.set_zlim(lims)
-    ax.view_init(elev=15, azim=70)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Z")  # Usually Z is up in mocap
-    ax.set_zlabel("Y")
+        processed_animations.append(joints)
 
-# Initialize plots for bones
-lines_orig = [ax_orig.plot([], [], [], "o-", color="blue")[0] for _ in bones]
-lines_recon = [ax_recon.plot([], [], [], "o-", color="red")[0] for _ in bones]
+    # Set up plot
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
 
+    # Get bounds
+    all_joints = np.concatenate(processed_animations, axis=0)
+    xs, ys, zs = all_joints[:, :, 0], all_joints[:, :, 1], all_joints[:, :, 2]
+    ax.set_xlim(xs.min() - 1, xs.max() + 1)
+    ax.set_ylim(ys.min() - 1, ys.max() + 1)
+    ax.set_zlim(zs.min() - 1, zs.max() + 1)
 
-def update(frame_idx):
-    joints_orig = get_joint_positions(x_orig[frame_idx])
-    joints_recon = get_joint_positions(x_recon[frame_idx])
+    ax.view_init(elev=45, azim=0, roll=90)
+    # Create scatter plots and bone lines
+    scatters = []
+    bone_lines = []
 
-    for line, (p, c) in zip(lines_orig, bones):
-        xs = [joints_orig[p, 0], joints_orig[c, 0]]
-        ys = [joints_orig[p, 2], joints_orig[c, 2]]  # Z is vertical
-        zs = [joints_orig[p, 1], joints_orig[c, 1]]
-        line.set_data(xs, ys)
-        line.set_3d_properties(zs)
+    for joints in processed_animations:
+        # Joint points
+        scatter = ax.scatter([], [], [], s=10, c="red")
+        scatters.append(scatter)
 
-    for line, (p, c) in zip(lines_recon, bones):
-        xs = [joints_recon[p, 0], joints_recon[c, 0]]
-        ys = [joints_recon[p, 2], joints_recon[c, 2]]
-        zs = [joints_recon[p, 1], joints_recon[c, 1]]
-        line.set_data(xs, ys)
-        line.set_3d_properties(zs)
+        # Bone connections
+        lines = []
+        for bone in BONES:
+            (line,) = ax.plot([], [], [], "b-", linewidth=2)
+            lines.append(line)
+        bone_lines.append(lines)
 
-    return lines_orig + lines_recon
+    # Animation function
+    def update(frame):
+        for i, joints in enumerate(processed_animations):
+            # Update joint positions
+            scatters[i]._offsets3d = (
+                joints[frame, :, 0],
+                joints[frame, :, 1],
+                joints[frame, :, 2],
+            )
 
+            # Update bone connections
+            for j, (start_joint, end_joint) in enumerate(BONES):
+                if start_joint < joints.shape[1] and end_joint < joints.shape[1]:
+                    x_data = [
+                        joints[frame, start_joint, 0],
+                        joints[frame, end_joint, 0],
+                    ]
+                    y_data = [
+                        joints[frame, start_joint, 1],
+                        joints[frame, end_joint, 1],
+                    ]
+                    z_data = [
+                        joints[frame, start_joint, 2],
+                        joints[frame, end_joint, 2],
+                    ]
 
-anim = FuncAnimation(fig, update, frames=x_orig.shape[0], interval=33, blit=True)
+                    bone_lines[i][j].set_data(x_data, y_data)
+                    bone_lines[i][j].set_3d_properties(z_data)
+
+        ax.set_title(f"Frame {frame}")
+        return scatters + [line for lines in bone_lines for line in lines]
+
+    # Create animation
+    ani = animation.FuncAnimation(fig, update, frames=160, interval=50, repeat=True)
+    return ani
+
 
 plt.show()

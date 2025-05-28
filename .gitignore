@@ -1,3 +1,4 @@
-data/
+boxing/
+locomotion/
 __pycache__/
-*.h5
+.ipynb_checkpoints/
