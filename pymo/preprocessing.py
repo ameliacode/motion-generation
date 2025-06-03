@@ -7,13 +7,15 @@ Created on June 12, 2017
 Modified by Simon Alexanderson, 2020-06-24
 """
 
-import copy
-
 import numpy as np
 import pandas as pd
 import scipy.ndimage.filters as filters
+from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation as R
 from sklearn.base import BaseEstimator, TransformerMixin
+
+from utils.Pivots import Pivots
+from utils.Quaternions import Quaternions
 
 
 class MocapParameterizer(BaseEstimator, TransformerMixin):
@@ -28,7 +30,7 @@ class MocapParameterizer(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("MocapParameterizer: " + self.param_type)
+        # print("MocapParameterizer: " + self.param_type)
         if self.param_type == "euler":
             return X
         elif self.param_type == "expmap":
@@ -320,7 +322,7 @@ class Mirror(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("Mirror: " + self.axis)
+        # print("Mirror: " + self.axis)
         Q = []
 
         if self.append:
@@ -467,7 +469,7 @@ class JointSelector(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("JointSelector")
+        # print("JointSelector")
         Q = []
 
         for track in X:
@@ -511,7 +513,7 @@ class Numpyfier(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("Numpyfier")
+        # print("Numpyfier")
         Q = []
 
         for track in X:
@@ -553,7 +555,7 @@ class Slicer(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("Slicer")
+        # print("Slicer")
         Q = []
         for track in X:
             vals = track
@@ -593,7 +595,7 @@ class RootTransformer(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X, y=None):
-        print("RootTransformer")
+        # print("RootTransformer")
         Q = []
 
         for track in X:
@@ -1009,16 +1011,16 @@ class DownSampler(BaseEstimator, TransformerMixin):
         for track in X:
             orig_fps = round(1.0 / track.framerate)
             rate = orig_fps // self.tgt_fps
-            if orig_fps % self.tgt_fps != 0:
-                print(
-                    "error orig_fps ("
-                    + str(orig_fps)
-                    + ") is not dividable with tgt_fps ("
-                    + str(self.tgt_fps)
-                    + ")"
-                )
-            else:
-                print("downsampling with rate: " + str(rate))
+            # if orig_fps % self.tgt_fps != 0:
+            #     print(
+            #         "error orig_fps ("
+            #         + str(orig_fps)
+            #         + ") is not dividable with tgt_fps ("
+            #         + str(self.tgt_fps)
+            #         + ")"
+            #     )
+            # else:
+            #     print("downsampling with rate: " + str(rate))
 
             for ii in range(0, rate):
                 new_track = track.clone()
@@ -1061,79 +1063,108 @@ class ReverseTime(BaseEstimator, TransformerMixin):
 class GlobalMotionRemover(BaseEstimator, TransformerMixin):
     """Remove global translation (XZ plane) and rotation (Y axis), preserve velocities"""
 
+    def __init__(self, direction_filterwidth=20):
+        self.direction_filterwidth = direction_filterwidth
+
     def fit(self, X, y=None):
         return self
 
     def transform(self, X, y=None):
-        print("GlobalMotionRemover")
+        # print("GlobalMotionRemover")
         Q = []
 
         for track in X:
             new_track = track.clone()
-            new_df = track.values.copy()
+            new_df = track.values[:-1].copy()
 
-            # Get root (Hips) position columns
-            root_x_col = f"{track.root_name}_Xposition"
-            root_y_col = f"{track.root_name}_Yposition"
-            root_z_col = f"{track.root_name}_Zposition"
+            positions, joint_names = self._extract_positions(track)
+            velocity = (positions[1:, 0:1] - positions[:-1, 0:1]).copy()
 
-            # Calculate velocities before removing global motion
-            root_x = track.values[root_x_col].values
-            root_z = track.values[root_z_col].values
+            positions[:, :, 0] = positions[:, :, 0] - positions[:, 0:1, 0]  # X
+            positions[:, :, 2] = positions[:, :, 2] - positions[:, 0:1, 2]  # Z
 
-            # Translational velocities in XZ plane
-            velocity_x = np.diff(root_x, prepend=root_x[0])
-            velocity_z = np.diff(root_z, prepend=root_z[0])
+            forward = self._calculate_forward_direction(positions, joint_names)
+            target = np.array([[0, 0, 1]]).repeat(len(forward), axis=0)
+            rotation = Quaternions.between(forward, target)[:, np.newaxis]
 
-            # Rotational velocity around Y axis using angle between forward directions
-            forward_dir = np.column_stack([velocity_x, velocity_z])
-            angular_velocity_y = np.zeros(len(forward_dir))
+            positions = rotation * positions
+            velocity = rotation[1:] * velocity
+            rvelocity = Pivots.from_quaternions(rotation[1:] * -rotation[:-1]).ps
+            positions = positions[:-1]
 
-            for i in range(1, len(forward_dir)):
-                v_prev = forward_dir[i - 1]
-                v_curr = forward_dir[i]
+            self._update_positions_in_dataframe(new_df, positions, joint_names)
 
-                norm_prev = np.linalg.norm(v_prev)
-                norm_curr = np.linalg.norm(v_curr)
+            root_name = track.root_name
 
-                if norm_prev > 1e-6 and norm_curr > 1e-6:
-                    # Normalize directions
-                    v_prev /= norm_prev
-                    v_curr /= norm_curr
-
-                    # Compute signed angle using cross product
-                    dot = np.dot(v_prev, v_curr)
-                    cross = np.cross(
-                        v_prev, v_curr
-                    )  # Scalar in 2D (Z component of 3D cross)
-
-                    # Clamp dot to avoid numerical issues
-                    dot = np.clip(dot, -1.0, 1.0)
-                    angle = np.arccos(dot)
-
-                    # Sign from cross product (positive = left turn, negative = right turn)
-                    sign = np.sign(cross)
-                    angular_velocity_y[i] = angle * sign
-
-            # Remove global translation from all joint positions
-            position_cols = [c for c in track.values.columns if "position" in c]
-
-            for col in position_cols:
-                if "Xposition" in col:
-                    new_df[col] = track.values[col] - root_x
-                elif "Zposition" in col:
-                    new_df[col] = track.values[col] - root_z
-                # Keep Y position (height) unchanged
-
-            # Add velocity channels to preserve motion information
-            new_df[f"{track.root_name}_dXposition"] = velocity_x
-            new_df[f"{track.root_name}_dZposition"] = velocity_z
-            new_df[f"{track.root_name}_dYrotation"] = angular_velocity_y
+            new_df[f"{root_name}_dXposition"] = velocity[:, 0, 0]
+            new_df[f"{root_name}_dZposition"] = velocity[:, 0, 2]
+            new_df[f"{root_name}_dYrotation"] = rvelocity.flatten()
 
             new_track.values = new_df
             Q.append(new_track)
 
         return Q
+
+    def _extract_positions(self, track):
+        """Extract positions and return joint names mapping"""
+        position_cols = [c for c in track.values.columns if "position" in c]
+        joints = sorted(list(set([c.split("_")[0] for c in position_cols])))
+
+        positions = []
+        for frame_idx in range(len(track.values)):
+            frame_positions = []
+            for joint in joints:
+                x = track.values[f"{joint}_Xposition"].iloc[frame_idx]
+                y = track.values[f"{joint}_Yposition"].iloc[frame_idx]
+                z = track.values[f"{joint}_Zposition"].iloc[frame_idx]
+                frame_positions.append([x, y, z])
+            positions.append(frame_positions)
+
+        return np.array(positions), joints
+
+    def _find_joint_index(self, joint_names, target_name):
+        """Find joint index from list of possible names"""
+        if target_name in joint_names:
+            return joint_names.index(target_name)
+        return None
+
+    def _calculate_forward_direction(self, positions, joint_names):
+        """Calculate forward direction using shoulder and hip indices"""
+
+        sdr_l_idx = self._find_joint_index(joint_names, "LeftShoulder")
+        sdr_r_idx = self._find_joint_index(
+            joint_names,
+            "RightShoulder",
+        )
+        hip_l_idx = self._find_joint_index(joint_names, "LeftUpLeg")
+        hip_r_idx = self._find_joint_index(
+            joint_names,
+            "RightUpLeg",
+        )
+
+        across1 = positions[:, hip_l_idx] - positions[:, hip_r_idx]
+        across0 = positions[:, sdr_l_idx] - positions[:, sdr_r_idx]
+        across = across0 + across1
+        across = across / np.sqrt((across**2).sum(axis=-1))[..., np.newaxis]
+
+        forward = np.cross(across, np.array([[0, 1, 0]]))
+        forward = gaussian_filter1d(
+            forward, self.direction_filterwidth, axis=0, mode="nearest"
+        )
+        forward = forward / np.sqrt((forward**2).sum(axis=-1))[..., np.newaxis]
+
+        return forward
+
+    def _update_positions_in_dataframe(self, df, positions, joint_names):
+        """Update dataframe with transformed positions"""
+        for i, joint in enumerate(joint_names):
+            if i < positions.shape[1]:
+                if f"{joint}_Xposition" in df.columns:
+                    df[f"{joint}_Xposition"] = positions[:, i, 0]
+                if f"{joint}_Yposition" in df.columns:
+                    df[f"{joint}_Yposition"] = positions[:, i, 1]
+                if f"{joint}_Zposition" in df.columns:
+                    df[f"{joint}_Zposition"] = positions[:, i, 2]
 
 
 class TemplateTransform(BaseEstimator, TransformerMixin):
