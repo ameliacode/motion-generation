@@ -29,7 +29,7 @@ def process_bvh_file(filepath):
                 ("param", MocapParameterizer("position")),
                 ("jtsel", JointSelector(JOINTS, include_root=False)),
                 ("dwnsampl", DownSampler(tgt_fps=30, keep_all=False)),
-                ("globrm", GlobalMotionRemover()),
+                ("globrm", AutoencoderPreprocess()),
                 ("np", Numpyfier()),
             ]
         )

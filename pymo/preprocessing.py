@@ -10,10 +10,10 @@ Modified by Simon Alexanderson, 2020-06-24
 import numpy as np
 import pandas as pd
 import scipy.ndimage.filters as filters
-from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation as R
 from sklearn.base import BaseEstimator, TransformerMixin
 
+from pymo.utils import *
 from utils.Pivots import Pivots
 from utils.Quaternions import Quaternions
 
@@ -1060,11 +1060,11 @@ class ReverseTime(BaseEstimator, TransformerMixin):
         return X
 
 
-class GlobalMotionRemover(BaseEstimator, TransformerMixin):
+class AutoencoderPreprocess(BaseEstimator, TransformerMixin):
     """Remove global translation (XZ plane) and rotation (Y axis), preserve velocities"""
 
-    def __init__(self, direction_filterwidth=20):
-        self.direction_filterwidth = direction_filterwidth
+    def __init__(self):
+        pass
 
     def fit(self, X, y=None):
         return self
@@ -1077,13 +1077,13 @@ class GlobalMotionRemover(BaseEstimator, TransformerMixin):
             new_track = track.clone()
             new_df = track.values[:-1].copy()
 
-            positions, joint_names = self._extract_positions(track)
+            positions, joint_names = extract_positions(track)
             velocity = (positions[1:, 0:1] - positions[:-1, 0:1]).copy()
 
             positions[:, :, 0] = positions[:, :, 0] - positions[:, 0:1, 0]  # X
             positions[:, :, 2] = positions[:, :, 2] - positions[:, 0:1, 2]  # Z
 
-            forward = self._calculate_forward_direction(positions, joint_names)
+            forward = calculate_forward_direction(positions, joint_names)
             target = np.array([[0, 0, 1]]).repeat(len(forward), axis=0)
             rotation = Quaternions.between(forward, target)[:, np.newaxis]
 
@@ -1092,7 +1092,7 @@ class GlobalMotionRemover(BaseEstimator, TransformerMixin):
             rvelocity = Pivots.from_quaternions(rotation[1:] * -rotation[:-1]).ps
             positions = positions[:-1]
 
-            self._update_positions_in_dataframe(new_df, positions, joint_names)
+            update_positions_in_dataframe(new_df, positions, joint_names)
 
             root_name = track.root_name
 
@@ -1104,67 +1104,6 @@ class GlobalMotionRemover(BaseEstimator, TransformerMixin):
             Q.append(new_track)
 
         return Q
-
-    def _extract_positions(self, track):
-        """Extract positions and return joint names mapping"""
-        position_cols = [c for c in track.values.columns if "position" in c]
-        joints = sorted(list(set([c.split("_")[0] for c in position_cols])))
-
-        positions = []
-        for frame_idx in range(len(track.values)):
-            frame_positions = []
-            for joint in joints:
-                x = track.values[f"{joint}_Xposition"].iloc[frame_idx]
-                y = track.values[f"{joint}_Yposition"].iloc[frame_idx]
-                z = track.values[f"{joint}_Zposition"].iloc[frame_idx]
-                frame_positions.append([x, y, z])
-            positions.append(frame_positions)
-
-        return np.array(positions), joints
-
-    def _find_joint_index(self, joint_names, target_name):
-        """Find joint index from list of possible names"""
-        if target_name in joint_names:
-            return joint_names.index(target_name)
-        return None
-
-    def _calculate_forward_direction(self, positions, joint_names):
-        """Calculate forward direction using shoulder and hip indices"""
-
-        sdr_l_idx = self._find_joint_index(joint_names, "LeftShoulder")
-        sdr_r_idx = self._find_joint_index(
-            joint_names,
-            "RightShoulder",
-        )
-        hip_l_idx = self._find_joint_index(joint_names, "LeftUpLeg")
-        hip_r_idx = self._find_joint_index(
-            joint_names,
-            "RightUpLeg",
-        )
-
-        across1 = positions[:, hip_l_idx] - positions[:, hip_r_idx]
-        across0 = positions[:, sdr_l_idx] - positions[:, sdr_r_idx]
-        across = across0 + across1
-        across = across / np.sqrt((across**2).sum(axis=-1))[..., np.newaxis]
-
-        forward = np.cross(across, np.array([[0, 1, 0]]))
-        forward = gaussian_filter1d(
-            forward, self.direction_filterwidth, axis=0, mode="nearest"
-        )
-        forward = forward / np.sqrt((forward**2).sum(axis=-1))[..., np.newaxis]
-
-        return forward
-
-    def _update_positions_in_dataframe(self, df, positions, joint_names):
-        """Update dataframe with transformed positions"""
-        for i, joint in enumerate(joint_names):
-            if i < positions.shape[1]:
-                if f"{joint}_Xposition" in df.columns:
-                    df[f"{joint}_Xposition"] = positions[:, i, 0]
-                if f"{joint}_Yposition" in df.columns:
-                    df[f"{joint}_Yposition"] = positions[:, i, 1]
-                if f"{joint}_Zposition" in df.columns:
-                    df[f"{joint}_Zposition"] = positions[:, i, 2]
 
 
 class TemplateTransform(BaseEstimator, TransformerMixin):

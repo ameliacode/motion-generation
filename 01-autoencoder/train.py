@@ -21,7 +21,7 @@ tensorboard_callback = TensorBoard(
 )
 
 data = np.load("./data/01_data.npz")
-X = data["clips"].astype(np.float32)  # Use float32 instead of float64 for efficiency
+X = data["clips"].astype(np.float32)
 train_data, val_data = train_test_split(X, test_size=0.2, random_state=42)
 
 Xmean = train_data.mean(axis=(0, 1))[np.newaxis, np.newaxis, :]
