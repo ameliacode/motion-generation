@@ -41,3 +41,12 @@ LOCOMOTION_SUBJECTS = [
     142,
     143,
 ]
+
+HIDDEN_UNITS = 256
+LATENT_DIM = 32  # can impact likelihood of posterior collapse
+NUM_EXPERTS = 6
+POSE_DIM = None
+BATCH_SIZE = 64
+EPOCHS = 180
+LEARNING_RATE = 0.0001
+BETA = 0.2

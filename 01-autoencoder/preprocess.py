@@ -26,11 +26,11 @@ def process_bvh_file(filepath):
 
         data_pipe = Pipeline(
             [
-                ("param", MocapParameterizer("position")),
-                ("jtsel", JointSelector(JOINTS, include_root=False)),
-                ("dwnsampl", DownSampler(tgt_fps=30, keep_all=False)),
-                ("globrm", AutoencoderPreprocess()),
-                ("np", Numpyfier()),
+                ("parameterizer", MocapParameterizer("position")),
+                ("jointselector", JointSelector(JOINTS, include_root=False)),
+                ("downsampler", DownSampler(tgt_fps=30, keep_all=False)),
+                ("preprocess", AutoencoderPreprocess()),
+                ("numpyfier", Numpyfier()),
             ]
         )
         piped_data = data_pipe.fit_transform([parsed_data])

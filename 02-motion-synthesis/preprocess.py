@@ -12,14 +12,6 @@ from pymo.viz_tools import *
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 
-def normalize_data(data):
-    """Normalize data to unit variance"""
-    mean = np.mean(data, axis=0)
-    std = np.std(data, axis=0)
-    std[std == 0] = 1  # Avoid division by zero
-    return (data - mean) / std
-
-
 def process_bvh_file(filepath):
     parser = BVHParser()
     parsed_data = parser.parse(filepath)
@@ -27,9 +19,7 @@ def process_bvh_file(filepath):
     data_pipe = Pipeline(
         [
             ("param", MocapParameterizer("position")),
-            ("jtsel", JointSelector(JOINTS, include_root=False)),
-            # ('jtnorm', JointLengthNormalizer()),
-            ("dwnsampl", DownSampler(tgt_fps=30, keep_all=False)),
+            ("dwnsampl", DownSampler(tgt_fps=60, keep_all=False)),
             ("globrm", GlobalMotionRemover()),
             ("np", Numpyfier()),
         ]
@@ -42,7 +32,6 @@ def process_bvh_file(filepath):
 
 def main():
     bvh_files = glob.glob(os.path.join(BVH_DIR, "*.bvh"))
-    bvh_files.extend(glob.glob(os.path.join(BVH_DIR, "**/*.bvh"), recursive=True))
 
     all_windows = []
     file_names = []
