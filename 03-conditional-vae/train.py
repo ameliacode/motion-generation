@@ -30,7 +30,7 @@ callbacks_list = [
     TqdmCallback(verbose=1),
 ]
 
-cvae.compile(optimizer=optimizers.Adam(learning_rate=LEARNING_RATE), loss="mse")
+cvae.compile(optimizer=optimizers.Adam(learning_rate=LEARNING_RATE))
 
 cvae.fit(
     [prev_poses, curr_poses],
@@ -39,5 +39,6 @@ cvae.fit(
     callbacks=callbacks_list,
     verbose=0,
 )
+
 
 print("Training done! Run: tensorboard --logdir logs")
