@@ -1106,6 +1106,62 @@ class AutoencoderPreprocess(BaseEstimator, TransformerMixin):
         return Q
 
 
+class CVAEPreprocess(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        # print("GlobalMotionRemover")
+        Q = []
+
+        for track in X:
+            new_track = track.clone()
+            new_df = track.values[:-1].copy()
+
+            positions, joint_names = extract_positions(track)
+            local_velocity = positions[1:] - positions[:-1]
+            root_velocity = local_velocity[:, 0:1]
+            forward, up = calculate_orientations(track, joint_names)  # has to implement
+
+            positions[:, :, 0] = positions[:, :, 0] - positions[:, 0:1, 0]  # X
+            positions[:, :, 2] = positions[:, :, 2] - positions[:, 0:1, 2]  # Z
+
+            forward = calculate_forward_direction(positions, joint_names)
+            target = np.array([[0, 0, 1]]).repeat(len(forward), axis=0)
+            rotation = Quaternions.between(forward, target)[:, np.newaxis]
+
+            positions = rotation * positions
+            root_velocity = rotation[1:] * root_velocity
+            local_velocity = rotation[1:] * local_velocity
+            rvelocity = Pivots.from_quaternions(rotation[1:] * -rotation[:-1]).ps
+            local_forward = rotation * forward
+            local_up = rotation * up
+
+            positions = positions[:-1]
+            local_forward = local_forward[:-1]
+            local_up = local_up[:-1]
+
+            root_name = track.root_name
+
+            new_df[f"{root_name}_dXposition"] = root_velocity[:, 0, 0]
+            new_df[f"{root_name}_dZposition"] = root_velocity[:, 0, 2]
+            new_df[f"{root_name}_dYrotation"] = rvelocity.flatten()
+
+            update_positions_in_dataframe(new_df, positions, joint_names)
+            update_velocities_in_dataframe(new_df, local_velocity, joint_names)
+
+            orientations = np.concatenate([local_forward, local_up], axis=-1)
+            update_orientations_in_dataframe(new_df, orientations, joint_names)
+
+            new_track.values = new_df
+            Q.append(new_track)
+
+        return Q
+
+
 class TemplateTransform(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass

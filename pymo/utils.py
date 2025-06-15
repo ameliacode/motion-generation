@@ -54,6 +54,31 @@ def calculate_forward_direction(positions, joint_names):
     return forward
 
 
+def calculate_orientations(track, joint_names):
+    """Simple extraction of forward and up vectors"""
+    n_frames = len(track.values)
+    n_joints = len(joint_names)
+
+    forward_vectors = np.zeros((n_frames, n_joints, 3))
+    up_vectors = np.zeros((n_frames, n_joints, 3))
+
+    for i in range(n_frames):
+        for j, joint_name in enumerate(joint_names):
+            # Get Euler angles (assuming degrees)
+            rx = track.values.iloc[i][f"{joint_name}_Xrotation"]
+            ry = track.values.iloc[i][f"{joint_name}_Yrotation"]
+            rz = track.values.iloc[i][f"{joint_name}_Zrotation"]
+
+            # Convert to rotation matrix
+            rot_matrix = R.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix()
+
+            # Extract direction vectors
+            forward_vectors[i, j] = rot_matrix[:, 2]  # Z-axis = forward
+            up_vectors[i, j] = rot_matrix[:, 1]  # Y-axis = up
+
+    return forward_vectors, up_vectors
+
+
 def update_positions_in_dataframe(df, positions, joint_names):
     """Update dataframe with transformed positions"""
     for i, joint in enumerate(joint_names):
