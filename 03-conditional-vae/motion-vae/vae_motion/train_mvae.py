@@ -31,6 +31,7 @@ from vae_motion.models import (
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["TORCH_USE_CUDA_DSA"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 
 class StatsLogger:

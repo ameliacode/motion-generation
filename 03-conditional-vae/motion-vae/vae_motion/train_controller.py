@@ -5,6 +5,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 current_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_dir)
@@ -106,7 +107,7 @@ def main():
     # setup parameters
     args = SimpleNamespace(
         env_module="environments",
-        env_name="TargetEnv-v0",
+        env_name="JoystickEnv-v0",
         device="cuda:0" if torch.cuda.is_available() else "cpu",
         num_parallel=100,
         vae_path="model/",
@@ -195,7 +196,7 @@ def main():
     logger = StatsLogger(csv_path=log_path)
 
     try:
-        for update in range(args.num_updates):
+        for update in tqdm(range(args.num_updates)):
 
             ep_info = {"reward": []}
             ep_reward = 0

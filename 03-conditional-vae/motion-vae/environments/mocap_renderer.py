@@ -177,7 +177,6 @@ class PBLMocapViewer:
         self.root_xyzs = (
             (F.pad(root_xzs, pad=[0, 1], value=3) * FOOT2METER).cpu().numpy()
         )
-        self.joint_xyzs = joint_xyzs
 
         for index in range(self.num_characters):
             self.characters.set_joint_positions(joint_xyzs[index], index)
@@ -437,36 +436,34 @@ class MultiMocapCharacters:
         if links:  # This has to be refactored
             self.linked_joints = np.array(
                 [
-                    [
-                        [9, 10],
-                        [8, 9],
-                        [7, 8],
-                        [6, 7],
-                        [0, 6],
-                        [4, 5],
-                        [3, 4],
-                        [2, 3],
-                        [1, 2],
-                        [0, 1],
-                        [14, 24],
-                        [24, 25],
-                        [25, 26],
-                        [26, 27],
-                        [27, 28],
-                        [28, 29],
-                        [29, 30],
-                        [14, 17],
-                        [17, 18],
-                        [18, 19],
-                        [19, 20],
-                        [20, 21],
-                        [21, 22],
-                        [22, 23],
-                        [12, 13],
-                        [9, 10],
-                        [11, 12],
-                        [0, 11],
-                    ]
+                    [9, 10],
+                    [8, 9],
+                    [7, 8],
+                    [6, 7],
+                    [0, 6],
+                    [4, 5],
+                    [3, 4],
+                    [2, 3],
+                    [1, 2],
+                    [0, 1],
+                    [14, 24],
+                    [24, 25],
+                    [25, 26],
+                    [26, 27],
+                    [27, 28],
+                    [28, 29],
+                    [29, 30],
+                    [14, 17],
+                    [17, 18],
+                    [18, 19],
+                    [19, 20],
+                    [20, 21],
+                    [21, 22],
+                    [22, 23],
+                    [12, 13],
+                    [9, 10],
+                    [11, 12],
+                    [0, 11],
                 ]
             )
 
@@ -513,7 +510,7 @@ class MultiMocapCharacters:
 
             deltas = xyzs[self.linked_joints[..., 1]] - xyzs[self.linked_joints[..., 0]]
             heights = np.linalg.norm(deltas, axis=-1)
-            positions = xyzs[self.linked_joints].mean(axis=2)
+            positions = xyzs[self.linked_joints].mean(axis=1)
 
             a = np.cross(deltas, self.z_axes)
             b = np.linalg.norm(deltas, axis=-1) + (deltas * self.z_axes).sum(-1)
@@ -531,7 +528,6 @@ class MultiMocapCharacters:
                 self._p.removeBody(link.id[0])
                 link = VCapsule(self._p, radius=0.06, height=height, rgba=rgba)
                 self.links[index][lid] = link
-
                 link.set_position(pos, orn)
 
             # self.heads[index].set_position(0.5 * (xyzs[4] - xyzs[3]) + xyzs[4]) # refactored
