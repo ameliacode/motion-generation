@@ -1,14 +1,29 @@
 import os
 import sys
+import warnings
 
+sys.path.append(os.getcwd())
 sys.path.append(os.path.join(os.getcwd(), "03-conditional-vae"))
+sys.path.append(os.path.join(os.getcwd(), "03-conditional-vae", "motion-vae"))
 
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+from config import *
+from matplotlib import animation
 from model import cvae
 from mpl_toolkits.mplot3d import Axes3D
+from tensorflow import keras
+
+from utils.Quaternions import Quaternions
+
+warnings.filterwarnings("ignore")
+dummy_prev_pose = tf.random.normal(shape=(1, FRAME_SIZE))
+dummy_curr_pose = tf.random.normal(shape=(1, FRAME_SIZE))
+
+# Call the model once to build it
+_ = cvae([dummy_prev_pose, dummy_curr_pose])
+cvae.load_weights("./weights/03-conditional-vae.weights.h5")
 
 bones = [
     [9, 10],
@@ -38,84 +53,79 @@ bones = [
     [12, 13],
     [11, 12],
     [0, 11],
+    [15, 16],
+    [14, 15],
 ]
 
-
-def extract_joints_xyz(v, x_ind, y_ind, z_ind):
-    x = v[x_ind]
-    y = v[z_ind]
-    z = v[y_ind]
-    return x, y, z
+# Dummy values – replace with actual stats
+POSE_MEAN = np.zeros(FRAME_SIZE, dtype=np.float32)
+POSE_STD = np.ones(FRAME_SIZE, dtype=np.float32)
 
 
-def animate_cvae():
-    initial_pose = np.random.normal(0, 0.1, 375)
+def normalize(x):
+    return (x - POSE_MEAN) / POSE_STD
+
+
+def denormalize(x):
+    return (x * POSE_STD) + POSE_MEAN
+
+
+def process_pose(pose_data):
+    joints = pose_data[3:96].reshape(-1, 3)
+    root_x, root_z, root_r = pose_data[0], pose_data[1], pose_data[2]
+    rotation = Quaternions.from_angle_axis(-root_r, np.array([0, 1, 0]))
+    joints = rotation * joints
+    joints[:, 0] += root_x
+    joints[:, 2] += root_z
+    return joints
+
+
+def animate_keras():
+    latent_size = LATENT_DIM
+    num_future = NUM_FUTURE_PREDICTIONS
+    frame_size = FRAME_SIZE
+
+    pose0 = np.load("./data/pose0.npy")[0]
+    cond = np.expand_dims(np.expand_dims(pose0, 0), 0)  # (1, 1, F)
+    cond = normalize(cond).reshape(1, -1)
+
     poses = []
-    prev_pose = initial_pose
-    curr_pose = initial_pose
+    for _ in range(OUTPUT):
+        z = np.random.normal(size=(1, latent_size)).astype(np.float32)
+        decoded = cvae.predict([z, cond])
+        decoded = decoded.reshape(-1, num_future, frame_size)
+        frame = denormalize(decoded)
+        poses.append(frame[0, 0])
+        cond = normalize(frame[:, 0:1]).reshape(1, -1)
 
-    for i in range(30):
-        z_mean, z_log_var, next_pose = cvae(
-            [tf.expand_dims(prev_pose, 0), tf.expand_dims(curr_pose, 0)]
-        )
-        next_pose = tf.squeeze(next_pose, 0).numpy()
-        poses.append(next_pose)
-        prev_pose = curr_pose
-        curr_pose = next_pose
-
-    poses = np.array(poses)
-
-    fig = plt.figure(figsize=(8, 6))
+    processed = np.array([process_pose(p) for p in poses])
+    fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
 
-    def animate(frame):
+    def update(i):
         ax.clear()
-        pose = poses[frame]
-
-        root_x = pose[0]
-        root_z = pose[1]
-        root_facing = pose[2]
-
-        x_indices = np.arange(3, 96, 3)
-        y_indices = np.arange(4, 96, 3)
-        z_indices = np.arange(5, 96, 3)
-
-        x, y, z = extract_joints_xyz(pose, x_indices, y_indices, z_indices)
-
-        cos_facing = np.cos(root_facing)
-        sin_facing = np.sin(root_facing)
-        rotation_matrix = np.array(
-            [[cos_facing, -sin_facing], [sin_facing, cos_facing]]
-        )
-
-        rotated_xy = np.dot(rotation_matrix, np.stack([x, y]))
-
-        world_joints = np.stack([rotated_xy[0], z, rotated_xy[1]], axis=1)
-        world_joints += np.array([root_x, 0, root_z])
-
-        ax.scatter(
-            world_joints[:, 0], world_joints[:, 1], world_joints[:, 2], c="red", s=50
-        )
-
-        for bone in bones:
-            if bone[0] < len(world_joints) and bone[1] < len(world_joints):
-                start = world_joints[bone[0]]
-                end = world_joints[bone[1]]
-                ax.plot(
-                    [start[0], end[0]], [start[1], end[1]], [start[2], end[2]], "b-"
-                )
-
+        joints = processed[i]
+        ax.scatter(joints[:, 0], joints[:, 1], joints[:, 2], c="dodgerblue", s=50)
+        for start, end in bones:
+            ax.plot(
+                [joints[start, 0], joints[end, 0]],
+                [joints[start, 1], joints[end, 1]],
+                [joints[start, 2], joints[end, 2]],
+                "dodgerblue",
+                linewidth=4,
+                solid_capstyle="round",
+            )
         ax.set_xlim(-2, 2)
         ax.set_ylim(-1, 2)
         ax.set_zlim(-2, 2)
-        ax.set_title(f"Frame {frame}")
+        ax.view_init(elev=45, azim=0, roll=90)
+        ax.set_title(f"Frame {i}")
 
-    anim = animation.FuncAnimation(
-        fig, animate, frames=len(poses), interval=200, repeat=True
-    )
-    plt.show()
-    return anim
+    anim = animation.FuncAnimation(fig, update, frames=len(poses), interval=50)
+    gif_path = "./generated_motion.gif"
+    anim.save(gif_path, writer="pillow", fps=20)
+    print(f"Saved GIF to {gif_path}")
 
 
 if __name__ == "__main__":
-    anim = animate_cvae()
+    animate_keras()
